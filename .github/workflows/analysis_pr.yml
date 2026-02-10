@@ -1,0 +1,71 @@
+name: Awareness vs CPA Intent Analysis
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  analyze-rq1:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run awareness vs intent analysis
+        run: |
+          DATA_FILE=$(ls -t data/*.csv | head -n 1)
+          python scripts/analyze_awareness_vs_cpa_intent.py --data "$DATA_FILE" --outdir reports
+
+      - name: Upload reports artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: awareness-vs-cpa-intent-reports
+          path: reports/
+
+      - name: Add concise run summary to PR
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          summary_path = Path('reports/awareness_vs_cpa_intent_summary.json')
+          if not summary_path.exists():
+              raise FileNotFoundError('Expected summary JSON was not generated.')
+
+          summary = json.loads(summary_path.read_text(encoding='utf-8'))
+          p = summary.get('chi2_p_value')
+          p_text = f"{p:.4f}" if isinstance(p, (int, float)) else 'NA'
+          did = summary.get('did_pp')
+          did_text = f"{did:.1f} pp" if isinstance(did, (int, float)) else 'NA'
+
+          lines = [
+              '## RQ1 automated analysis summary',
+              f"- N (post-cleaning metadata drop): **{summary.get('n_total', 'NA')}**",
+              (
+                  '- Missingness (Q27/Q29/Q53): '
+                  f"**{summary.get('missing_q27', 'NA')} / {summary.get('missing_q29', 'NA')} / {summary.get('missing_q53', 'NA')}**"
+              ),
+              f"- Complete cases: **{summary.get('n_complete', 'NA')}**",
+              f"- Chi-square p-value (Q53 × Q29): **{p_text}**",
+              f"- DiD-style contrast (graduate minus undergrad awareness lift): **{did_text}**",
+              f"- Interaction direction (logit): **{summary.get('interaction_direction', 'Not estimated')}**",
+              f"- Model note: {summary.get('model_note', 'NA')}",
+              '- Full report + charts are available in the uploaded artifact `awareness-vs-cpa-intent-reports`.',
+          ]
+
+          with open(Path.cwd() / 'summary_tmp.md', 'w', encoding='utf-8') as f:
+              f.write('\n'.join(lines) + '\n')
+          PY
+          cat summary_tmp.md >> "$GITHUB_STEP_SUMMARY"
+          rm -f summary_tmp.md
