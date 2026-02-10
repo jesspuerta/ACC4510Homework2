@@ -151,11 +151,36 @@ def map_intent_binary(value: str) -> Optional[int]:
 def table_to_markdown(df: pd.DataFrame, decimals: int = 1) -> str:
     if df.empty:
         return "_No data available._"
+
     formatted = df.copy()
     for col in formatted.columns:
         if pd.api.types.is_numeric_dtype(formatted[col]):
-            formatted[col] = formatted[col].map(lambda x: f"{x:.{decimals}f}" if pd.notna(x) else "")
-    return formatted.to_markdown()
+            formatted[col] = formatted[col].map(
+                lambda x: f"{x:.{decimals}f}" if pd.notna(x) else ""
+            )
+        else:
+            formatted[col] = formatted[col].fillna("").astype(str)
+
+    if isinstance(formatted.index, pd.MultiIndex):
+        formatted = formatted.reset_index()
+    else:
+        formatted = formatted.copy()
+        formatted.insert(0, "index", formatted.index.astype(str))
+
+    headers = [str(c) for c in formatted.columns]
+    rows = formatted.values.tolist()
+
+    def _escape_md(value: object) -> str:
+        return str(value).replace("|", "\\|").replace("\n", " ")
+
+    md_lines = [
+        "| " + " | ".join(_escape_md(h) for h in headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in rows:
+        md_lines.append("| " + " | ".join(_escape_md(cell) for cell in row) + " |")
+
+    return "\n".join(md_lines)
 
 
 def save_overall_chart(crosstab: pd.DataFrame, out_path: Path) -> None:
@@ -385,13 +410,13 @@ def run_analysis(data_path: Path, outdir: Path) -> Dict[str, object]:
 ## Overall association: Q53 (awareness) × Q29 (CPA intention)
 
 ### Counts
-{ctab.to_markdown()}
+{table_to_markdown(ctab, decimals=0)}
 
 ### Row percentages (within awareness)
-{(row_pct).round(1).to_markdown()}
+{table_to_markdown((row_pct).round(1), decimals=1)}
 
 ### Column percentages (within intention category)
-{(col_pct).round(1).to_markdown()}
+{table_to_markdown((col_pct).round(1), decimals=1)}
 
 ### Chi-square test
 - χ² = **{chi2:.3f}**, df = **{int(dof) if pd.notna(dof) else 'NA'}**, p-value = **{p_value:.4f}**
@@ -419,7 +444,7 @@ def run_analysis(data_path: Path, outdir: Path) -> Dict[str, object]:
 
     if "q31" in analysis_df.columns and analysis_df["q31"].notna().any():
         grad_q31 = analysis_df[analysis_df["student_type"] == "Graduate"]["q31"].value_counts(dropna=True)
-        report += "\n" + grad_q31.to_markdown() + "\n"
+        report += "\n" + table_to_markdown(grad_q31.to_frame(name="count"), decimals=0) + "\n"
     else:
         report += "\n_No usable Q31 responses found._\n"
 
